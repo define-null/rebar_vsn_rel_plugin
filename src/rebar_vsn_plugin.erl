@@ -21,34 +21,69 @@
 %%% This module provides a reasonable way to get decent semver compatible vsn
 %%% from the system. This uses the rebar post_compile hook to rewrite the app
 %%% file metadata with the correct version.
--module(rebar_vsn_plugin).
-
--export([post_compile/2]).
+-module(rebar_vsn_rel_plugin).
+-export([pre_generate/2,
+         post_generate/2
+        ]).
 
 %%============================================================================
-%% API
+%% API  
 %%============================================================================
-post_compile(Config, AppFile) ->
-    {AppName, SrcDetail} =
-        get_app_meta(Config, AppFile),
-    case proplists:get_value(vsn, SrcDetail) of
-        "semver" ->
-            do_vsn_replacement(AppName, Config, AppFile);
-        semver ->
-            do_vsn_replacement(AppName, Config, AppFile);
-        _ ->
+pre_generate(_Config, ReltoolFile) ->
+    case rebar_rel_utils:is_rel_dir() of
+        {true, ReltoolFile} ->
+            Semver = get_semver(),
+            case filelib:is_regular(ReltoolFile ++ ".bak") of
+                false -> ok;
+                true  ->
+                    rebar_utils:abort("It seems that last generate failed. Please restore reltool.config from reltool.config.bak manually")
+            end,
+            case file:copy(ReltoolFile, ReltoolFile ++ ".bak") of
+                {ok, _} -> ok;
+                {error, Reason} ->
+                    rebar_utils:abort("Failed to backup ~p: ~p~n", [ReltoolFile, Reason])
+            end,
+            
+            [{sys, RelConfig}| Other] = get_reltool_release_info(ReltoolFile),
+            NewRelConfig = lists:map(fun({rel, Rel, "semver", O}) ->
+                                               {rel, Rel, Semver, O};
+                                        ({rel, Rel, semver, O}) ->
+                                               {rel, Rel, Semver, O};
+                                          (O) ->
+                                               O
+                                       end, RelConfig),
+            write_rel_file(ReltoolFile, [{sys, NewRelConfig} | Other]);
+        false ->
             ok
+    end.
+
+post_generate(_Config, ReltoolFile) ->
+    case rebar_rel_utils:is_rel_dir() of
+        {true, ReltoolFile} ->
+            case file:rename(ReltoolFile ++ ".bak", ReltoolFile) of
+                ok ->
+                    ok;
+                {error, Reason} ->
+                    rebar_utils:abort("Failed to restore from backup ~p: ~p~n", [ReltoolFile ++ ".bak", Reason])
+            end;
+        false ->
+            ok
+    end.            
+
+get_reltool_release_info(ReltoolFile) when is_list(ReltoolFile) ->
+    case file:consult(ReltoolFile) of
+        {ok, ReltoolConfig} ->
+            ReltoolConfig;
+        _ ->
+            rebar_utils:abort("Failed to parse ~s~n", [ReltoolFile])
     end.
 
 %%============================================================================
 %% Internal Functions
 %%============================================================================
-
-do_vsn_replacement(AppName, Config, AppFile) ->
-    EbinAppFile= filename:join("ebin", erlang:atom_to_list(AppName) ++ ".app"),
-
-    {AppName, Details0} = get_app_meta(Config, EbinAppFile),
-
+ 
+%% TODO: Fix error with os:cmd errors
+get_semver() ->
     %% Get the tag timestamp and minimal ref from the system. The
     %% timestamp is really important from an ordering perspective.
     RawRef = os:cmd("git log -n 1 --pretty=format:'%h\n' "),
@@ -69,27 +104,21 @@ do_vsn_replacement(AppName, Config, AppFile) ->
     Count = erlang:iolist_to_binary(re:replace(RawCount, "\\s", "", [global])),
 
     %% Create the valid [semver](http://semver.org) version from the tag
-    Vsn = case Count of
-              <<"0">> ->
-                  erlang:binary_to_list(erlang:iolist_to_binary(TagVsn));
-              _ ->
-                  erlang:binary_to_list(erlang:iolist_to_binary([TagVsn, "+build.",
-                                                                 Count, ".", Ref]))
-          end,
-
-    %% Replace the old version with the new one
-    Details1 = lists:keyreplace(vsn, 1, Details0, {vsn, Vsn}),
-
-    write_app_file(EbinAppFile, {application, AppName, Details1}),
-    update_config(Config, AppName, AppFile, Details1).
+    case Count of
+        <<"0">> ->
+            erlang:binary_to_list(erlang:iolist_to_binary(TagVsn));
+        _ ->
+            erlang:binary_to_list(erlang:iolist_to_binary([TagVsn, "+build.",
+                                                           Count, ".", Ref]))
+    end.
 
 %%============================================================================
 %% Internal Functions
 %%============================================================================
 
-write_app_file(AppFile, AppTerms) ->
-    AppHeader = "%%% -*- mode: Erlang; fill-column: 80; comment-column: 75; -*-\n\n",
-    file:write_file(AppFile, [AppHeader, io_lib:fwrite("~p. ", [AppTerms])]).
+write_rel_file(RelFile, RelTerms) ->
+    Format = "%% Autogenerated~n" ++ string:copies("~p.~n", length(RelTerms)),
+    file:write_file(RelFile, io_lib:fwrite(Format, RelTerms)).
 
 parse_tags() ->
     first_valid_tag(os:cmd("git log --oneline --decorate  | fgrep \"tag: \" -1000")).
@@ -100,26 +129,4 @@ first_valid_tag(Line) ->
             {Tag, Vsn};
         nomatch ->
             {undefined, "0.0.0"}
-    end.
-
-update_config(Config, AppName, AppFile, Details) ->
-    case lists:member({set_xconf, 3}, rebar_config:module_info(exports)) of
-        true ->
-            {ok, rebar_config:set_xconf(Config, {appfile, {app_file, AppFile}},
-                                        {AppName, Details})};
-        false ->
-            ok
-    end.
-
-get_app_meta(Config, EbinAppFile) ->
-    case lists:member({get_xconf, 2}, rebar_config:module_info(exports)) of
-        true ->
-            rebar_config:get_xconf(Config, {appfile, {app_file, EbinAppFile}}, []);
-        false ->
-            case file:consult(EbinAppFile) of
-                {ok, [{application, AppName, Details}]} ->
-                    {AppName, Details};
-                _ ->
-                    rebar_utils:abort("Unable to read app file ~s~n", [EbinAppFile])
-            end
     end.

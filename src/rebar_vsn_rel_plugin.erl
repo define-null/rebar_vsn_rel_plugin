@@ -17,6 +17,7 @@
 %%%---------------------------------------------------------------------------
 %%% @author Eric Merrit <ericbmerritt@gmail.com>
 %%% @copyright (C) 2012, Eric Merrit
+%%% @author Defnull <define.null@gmail.com>
 %%% @doc
 %%% This module provides a reasonable way to get decent semver compatible vsn
 %%% from the system. This uses the rebar post_compile hook to rewrite the app

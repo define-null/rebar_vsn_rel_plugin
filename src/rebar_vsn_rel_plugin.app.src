@@ -2,6 +2,7 @@
 %%
 %% @author Eric Merritt <ericbmerritt@gmail.com>
 %% @copyright Erlware, Inc.
+%% @author Defnull <define.null@gmail.com>
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -18,7 +19,7 @@
 %% under the License.
 %%
 
-{application, rebar_vsn_plugin,
+{application, rebar_vsn_rel_plugin,
  [{description, "Correct version manipulation for rebar"},
   {vsn, git},
   {modules, []},
